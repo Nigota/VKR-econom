@@ -1,0 +1,34 @@
+{
+  "name": "VKR-econom",
+  "dockerComposeFile": "docker-compose.yml",
+  "service": "dev",
+  "remoteUser": "vscode",
+  "workspaceFolder": "/home/vscode/devcontainer",
+  "customizations": {
+    "vscode": {
+      "settings": {
+        "terminal.integrated.defaultProfile.linux": "bash",
+        "python.analysis.typeCheckingMode": "off"
+      },
+      "extensions": [
+        "ms-python.python",
+        "ms-python.debugpy",
+        "ms-python.vscode-pylance",
+        "ms-python.isort",
+        "ms-python.black-formatter",
+        "ms-azuretools.vscode-docker",
+        "hbenl.vscode-test-explorer",
+        "littlefoxteam.vscode-python-test-adapter",
+        "davidanson.vscode-markdownlint",
+        "streetsidesoftware.code-spell-checker",
+        "streetsidesoftware.code-spell-checker-russian",
+        "esbenp.prettier-vscode",
+        "spryinno.kanpilot"
+      ]
+    }
+  },
+  "mounts": [
+    "source=/var/run/docker.sock,target=/var/run/docker.sock,type=bind"
+  ],
+  "postCreateCommand": "sudo pip install -r requirements-dev.txt"
+}
