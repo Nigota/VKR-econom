@@ -7,7 +7,6 @@ from backend.logger import get_logger, set_request_id
 
 # Инициализация логгера и установка идентификатора запроса для удобного фильтрования логов
 logger = get_logger()
-set_request_id("moex_api")
 
 
 def _format_date(date):
@@ -52,6 +51,8 @@ def get_index_data(index="IMOEX", date="") -> pd.DataFrame:
     Returns:
         DataFrame: Таблица с аналитическими данными по индексу.
     """
+    set_request_id("moex_api")
+
     # Формируем URL запроса к MOEX ISS API
     url = f"https://iss.moex.com/iss/statistics/engines/stock/markets/index/analytics/{index}.json"
     all_rows = []  # здесь будем хранить все строки данных
@@ -107,7 +108,7 @@ def get_index_data(index="IMOEX", date="") -> pd.DataFrame:
     return df
 
 
-def get_kline(security, start_dt, end_dt=None, interval=None):
+def get_kline(security, start_dt, end_dt=None, interval=None) -> pd.DataFrame:
     """
     Функция возвращает датафрейм со свечными данными по одной акции
     за указанный период [start_dt; end_dt] с заданным интервалом.
@@ -120,6 +121,8 @@ def get_kline(security, start_dt, end_dt=None, interval=None):
       - 60 -> часовые
       - 24 -> дневные
     """
+    set_request_id("moex_api")
+
     # Если дата конца периода не задана, берём только один день (start_dt)
     end_dt = start_dt if end_dt is None else end_dt
     # По умолчанию берём дневные свечи (interval = "24")
@@ -162,7 +165,7 @@ def get_kline(security, start_dt, end_dt=None, interval=None):
     return df
 
 
-def load_imoex_list(date=""):
+def load_imoex_list(date="") -> dict:
     """
     Загружает список тикеров, входящих в состав индекса IMOEX на указанную дату
     или ближайшую доступную дату в пределах последних 30 дней.
@@ -173,6 +176,8 @@ def load_imoex_list(date=""):
     Returns:
         dict: {дата: [список тикеров]} на дату с доступными данными.
     """
+    set_request_id("moex_api")
+
     try:
         # Преобразуем входные параметры к datetime и проверяем корректность формата
         date = _format_date(date)
@@ -205,7 +210,7 @@ def load_imoex_list(date=""):
     return {date.strftime("%Y-%m-%d"): imoex_index}
 
 
-def load_imoex_list_with_prices(date=""):
+def load_imoex_list_with_prices(date="") -> dict:
     """
     Загружает список тикеров, входящих в состав индекса IMOEX на указанную дату,
     и подгружает для них свечные данные (OHLCV).
@@ -216,6 +221,7 @@ def load_imoex_list_with_prices(date=""):
     Returns:
         dict: {дата: {тикер: {'open', 'high', 'low', 'close', 'volume'}}}
     """
+    set_request_id("moex_api")
     logger.info("--------------------------------------------")
 
     date = _format_date(date).strftime("%Y-%m-%d")
@@ -256,12 +262,12 @@ def load_imoex_list_with_prices(date=""):
     return {date: imoex_index_with_prices}
 
 
-def load_history_imoex_list_with_prices(start_date="", end_date=""):
+def load_history_imoex_list_with_prices(start_date="", end_date="") -> dict:
     """
     Загружает данные по составу индекса IMOEX и свечным данным всех его тикеров
     за период между start_date и end_date.
 
-    Args:
+    Params:
         start_date (str): Начальная дата в формате 'YYYY-MM-DD'.
         end_date (str): Конечная дата в формате 'YYYY-MM-DD'. Если не указана —
                         загружается только 1 день (аналог load_imoex_list_with_prices).
@@ -269,6 +275,8 @@ def load_history_imoex_list_with_prices(start_date="", end_date=""):
     Returns:
         dict: {дата: {тикер: {open, high, low, close, volume}}}
     """
+    set_request_id("moex_api")
+
     try:
         # Преобразуем входные параметры к datetime и проверяем корректность формата
         start_date = _format_date(start_date)
@@ -301,29 +309,53 @@ def load_history_imoex_list_with_prices(start_date="", end_date=""):
     return res
 
 
-def load_available_history_imoex_list_with_prices_to(date="", days_back=0):
+def load_available_history_imoex_list_with_prices_to(date="", days_back=0) -> dict:
+    """
+    Загружает исторические данные по составу индекса IMOEX и свечным данным всех его тикеров
+    на указанную дату и заданное количество торговых дней назад.
+
+    Params:
+        date (str): Дата в формате 'YYYY-MM-DD'. Если пустая строка — берется текущая дата.
+        days_back (int): Количество торговых дней, которые нужно захватить назад от указанной даты.
+
+    Returns:
+        dict: {дата: {тикер: {open, high, low, close, volume}}}
+    """
+    set_request_id("moex_api")
+
     try:
-        # Преобразуем входные параметры к datetime и проверяем корректность формата
+        # Преобразуем входной параметр в datetime и проверяем его корректность
         date = _format_date(date)
     except Exception as e:
+        # Если формат некорректный — логируем ошибку и возвращаем пустой результат
         logger.error(f"Ошибка: {e}")
-        # Возвращаем пустую структуру с сегодняшней датой
         return {datetime.today().strftime("%Y-%m-%d"): {}}
 
-    # Логируем диапазон дат
+    # Логируем, что начинаем сбор данных
     logger.info(
-        f"Начинаю сбор истории индекса с ценами на {date.strftime("%Y-%m-%d")} за {days_back + 1} торговых сессий"
+        f"Начинаю сбор истории индекса с ценами на {date.strftime('%Y-%m-%d')} "
+        f"за {days_back + 1} торговых сессий"
     )
 
     res = {}
+    # Максимальное количество попыток поиска торговых дней —
+    # запас в 30 календарных дней + нужное количество торговых сессий
     try_cnt = 30 + days_back
-    # Ищем данные, пока не собирем данные за days_back + 1 торговых сессий
+
+    # Ищем данные до тех пор, пока не соберем достаточное количество торговых сессий
     while len(res) <= days_back and try_cnt > 0:
+        # Загружаем состав индекса и цены на текущую дату
         tmp = load_imoex_list_with_prices(date.strftime("%Y-%m-%d"))
 
+        # Проверяем, что данные по текущей дате не пустые
         if len(tmp[date.strftime("%Y-%m-%d")]) != 0:
+            # Если данные есть — добавляем их в общий результат
             res = res | tmp
+        else:
+            # Если данных нет (например, выходной/праздник) — логируем и пробуем предыдущий день
+            logger.info("Сессия пустая, беру другую...")
 
+        # Переходим на 1 календарный день назад
         date = date - timedelta(days=1)
         try_cnt -= 1
 
@@ -336,7 +368,9 @@ if __name__ == "__main__":
 
     # Пример вызова: получить тикеры индекса на конкретную дату
     # res = load_history_imoex_list_with_prices()
-    res = load_available_history_imoex_list_with_prices_to(date="2020-09-14")
+    res = load_available_history_imoex_list_with_prices_to(
+        date="2025-09-16", days_back=2
+    )
     pprint(res)
     # print()
     # pprint(get_index_data(date="2025-09-11"))
