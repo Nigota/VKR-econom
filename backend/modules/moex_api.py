@@ -1,12 +1,31 @@
 import requests
 import pandas as pd
+import os
+from time import sleep
 from datetime import datetime, timedelta
 
 # Импорт собственного логгера для ведения логов и установки идентификатора запроса
 from backend.logger import get_logger, set_request_id
+from backend.config import MOEX_DATA_WP, MOEX_DATA_LIST
 
 # Инициализация логгера и установка идентификатора запроса для удобного фильтрования логов
 logger = get_logger()
+
+
+def _check_existing_file(file_path):
+    # Проверяем наличие файла истории
+    is_existing_file = os.path.exists(file_path)
+
+    # Cоздаем файл для записи, если такого нет
+    if is_existing_file:
+        os.makedirs(os.path.dirname(os.path.abspath(file_path)), exist_ok=True)
+
+    return is_existing_file
+
+
+# Проверяем наличие файла истории c ценами
+is_moex_data_wp_file_exists = _check_existing_file(MOEX_DATA_WP)
+is_moex_data_list_file_exists = _check_existing_file(MOEX_DATA_LIST)
 
 
 def _format_date(date):
@@ -38,6 +57,34 @@ def _format_date(date):
     except ValueError as e:
         # Если строка не соответствует формату 'YYYY-MM-DD'
         raise ValueError("Неправильный формат даты. Надо: YYYY-MM-DD")
+
+
+def _save_moex_list():
+    pass
+
+
+def _save_moex_wp_data(date, data):
+    # Превращаем словарь в DataFrame
+    df = pd.DataFrame.from_dict(data, orient="index")
+    df.reset_index(inplace=True)
+    df.rename(columns={"index": "ticker"}, inplace=True)
+    df["date"] = date  # Добавим колонку с датой
+
+    df = df[["date", "ticker", "open", "high", "low", "close", "volume"]]
+
+    # Объединяем новые записи со старыми
+    if not is_moex_data_wp_file_exists:
+        new_moex = df
+    else:
+        old_moex = pd.read_csv(MOEX_DATA_WP)
+        new_moex = pd.concat([old_moex, df], ignore_index=True)
+        new_moex = new_moex.drop_duplicates(
+            subset=["date", "ticker"], keep="first"
+        ).dropna()
+
+    # Сохраняем новые записи в csv
+    new_moex.to_csv(MOEX_DATA_WP, index=False, encoding="utf-8")
+    logger.debug(f"Данные сохранены в {MOEX_DATA_WP}")
 
 
 def get_index_data(index="IMOEX", date="") -> pd.DataFrame:
@@ -128,27 +175,35 @@ def get_kline(security, start_dt, end_dt=None, interval=None) -> pd.DataFrame:
     # По умолчанию берём дневные свечи (interval = "24")
     interval = "24" if interval is None else interval
 
-    try:
-        # Формируем базовый URL для ISS API
-        url = f"https://iss.moex.com/iss/engines/stock/markets/shares/securities/{security}/candles.json"
-        # Параметры запроса: даты и интервал
-        params = {
-            "from": start_dt,
-            "till": end_dt,
-            "interval": interval,
-        }
-        # Делаем запрос к API (с большим таймаутом на случай долгой загрузки)
-        r = requests.get(url, params=params, timeout=1000)
-        # Если сервер вернул ошибку (например, 404/500), выбросится исключение
-        r.raise_for_status()
-        # Преобразуем ответ в JSON
-        data = r.json()
+    # Цикл для отправки нескольких запросов
+    try_cnt = 5
+    while try_cnt > 0:
+        try:
+            # Формируем базовый URL для ISS API
+            url = f"https://iss.moex.com/iss/engines/stock/markets/shares/securities/{security}/candles.json"
+            # Параметры запроса: даты и интервал
+            params = {
+                "from": start_dt,
+                "till": end_dt,
+                "interval": interval,
+            }
+            # Делаем запрос к API (с большим таймаутом на случай долгой загрузки)
+            r = requests.get(url, params=params, timeout=1000)
+            # Если сервер вернул ошибку (например, 404/500), выбросится исключение
+            r.raise_for_status()
+            # Преобразуем ответ в JSON
+            data = r.json()
+            # Если всё сработало корректно, то выходим из цикла
+            break
 
-    except Exception as e:
-        # Если ошибка — логируем её и полный URL с параметрами для отладки
+        except Exception as e:
+            # Возвращаем пустой датафрейм со стандартными колонками
+            try_cnt -= 1
+            sleep(2)
+
+    if try_cnt == 0:
         full_url = f"{url}?{requests.compat.urlencode(params)}"
-        logger.error(f"Ошибка запроса: {e}. URL: {full_url}")
-        # Возвращаем пустой датафрейм со стандартными колонками
+        logger.error(f"Ошибка запроса url: {full_url}")
         return pd.DataFrame(
             data=[], columns=["begin", "open", "high", "low", "close", "volume"]
         )
@@ -243,23 +298,39 @@ def load_imoex_list_with_prices(date="") -> dict:
     # Словарь для хранения данных о тикерах с их свечными данными
     imoex_index_with_prices = {}
 
+    # Подгружаем локальные данные, если есть
+    if is_moex_data_wp_file_exists:
+        df = pd.read_csv(MOEX_DATA_WP)
+
     # Проходим по каждому тикеру
     for security in imoex_index:
-        # Загружаем данные свечей для тикера на дату last_date
-        security_data = get_kline(security=security, start_dt=date)
+        if is_moex_data_wp_file_exists and ((df["date"] == date) & (df["ticker"] == security)).any():
+            # Если есть сохраненные данные, то грузим оттуда
+            security_data = df[(df["date"] == date) & (df["ticker"] == security)].copy()
+            security_data.drop(columns=["ticker"], inplace=True)
+        else:
+            # Загружаем данные свечей для тикера на дату date c через API
+            security_data = get_kline(security=security, start_dt=date)
+            security_data.rename(columns={"begin": "date"}, inplace=True)
 
         # Если данные есть, добавляем в итоговый словарь
         if not security_data.empty:
             # Убираем колонку 'begin' и преобразуем в словарь (одна запись)
             imoex_index_with_prices[security] = security_data.drop(
-                columns=["begin"]
+                columns=["date"]
             ).to_dict(orient="records")[0]
+
+    res = {date: imoex_index_with_prices}
+
+    # Сохраняем данные, чтобы повторно не запрашивать, если данные не пустые
+    if len(imoex_index_with_prices) != 0:
+        _save_moex_wp_data(date, imoex_index_with_prices)
 
     logger.info(f"Сбор индекса завершен - {len(imoex_index_with_prices)} акций!")
     logger.info("--------------------------------------------")
 
     # Возвращаем словарь с датой и данными всех тикеров
-    return {date: imoex_index_with_prices}
+    return res
 
 
 def load_history_imoex_list_with_prices(start_date="", end_date="") -> dict:
@@ -368,11 +439,12 @@ if __name__ == "__main__":
 
     # Пример вызова: получить тикеры индекса на конкретную дату
     # res = load_history_imoex_list_with_prices()
-    res = load_available_history_imoex_list_with_prices_to(
-        date="2025-09-16", days_back=2
-    )
-    pprint(res)
+    # pprint(get_kline("SBER", "2025-09-15"))
+    # res = load_imoex_list(date="2025-09-13")
+    # pprint(res)
+    res = load_available_history_imoex_list_with_prices_to(date="2025-09-16", days_back=5)
+    # pprint(res)
+    # _save_moex_data(res)
     # print()
     # pprint(get_index_data(date="2025-09-11"))
     # print()
-    # pprint(get_kline("SBER", "2025-09-15"))
