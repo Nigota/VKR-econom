@@ -9,5 +9,5 @@ LOG_ROTATE_WHEN="midnight"
 LOG_BACKUP_COUNT=7
 
 # data files
-MOEX_DATA_WP="backend/db/moex_wp.csv"
-MOEX_DATA_LIST="backend/db/moex_list.csv"
+MOEX_DATA_WP="backend/db/moex_wp.parquet"
+MOEX_DATA_L="backend/db/moex_list.parquet"

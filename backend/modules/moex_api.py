@@ -6,18 +6,29 @@ from datetime import datetime, timedelta
 
 # Импорт собственного логгера для ведения логов и установки идентификатора запроса
 from backend.logger import get_logger, set_request_id
-from backend.config import MOEX_DATA_WP, MOEX_DATA_LIST
+from backend.config import MOEX_DATA_WP, MOEX_DATA_L
 
 # Инициализация логгера и установка идентификатора запроса для удобного фильтрования логов
 logger = get_logger()
 
 
-def _check_existing_file(file_path):
-    # Проверяем наличие файла истории
+def _check_existing_file(file_path: str) -> bool:
+    """
+    Проверяет существование файла и при необходимости создает директории.
+
+    Функция проверяет, существует ли файл по указанному пути.
+    Если файл отсутствует, автоматически создаются все необходимые директории,
+    в которых этот файл должен располагаться. Сам файл при этом не создается.
+
+    Args:
+        file_path (str): Путь к файлу.
+
+    Returns:
+        bool: True, если файл уже существовал, иначе False.
+    """
     is_existing_file = os.path.exists(file_path)
 
-    # Cоздаем файл для записи, если такого нет
-    if is_existing_file:
+    if not is_existing_file:
         os.makedirs(os.path.dirname(os.path.abspath(file_path)), exist_ok=True)
 
     return is_existing_file
@@ -25,65 +36,143 @@ def _check_existing_file(file_path):
 
 # Проверяем наличие файла истории c ценами
 is_moex_data_wp_file_exists = _check_existing_file(MOEX_DATA_WP)
-is_moex_data_list_file_exists = _check_existing_file(MOEX_DATA_LIST)
+is_moex_data_list_file_exists = _check_existing_file(MOEX_DATA_L)
 
 
-def _format_date(date):
+def _format_date(date: str) -> datetime:
     """
-    Приводит дату к объекту datetime с проверками.
-    Если дата пустая — возвращает сегодняшнюю.
-    Если дата в будущем — заменяет её на сегодняшний день.
+    Преобразует строку в объект datetime с дополнительными проверками.
+
+    Если дата пустая, возвращается текущая дата.
+    Если дата в будущем, она заменяется на сегодняшний день.
 
     Args:
         date (str): Дата в формате 'YYYY-MM-DD'.
 
     Returns:
-        datetime: Проверенная и отформатированная дата.
-    """
-    # Проверяем, что аргумент — строка
-    if not isinstance(date, str):
-        raise ValueError("Дата должна быть string!")
+        datetime.datetime: Проверенная и отформатированная дата.
 
-    # Если строка пустая, возвращаем сегодняшнюю дату
-    if len(date) == 0:
+    Raises:
+        ValueError: Если аргумент не является строкой.
+        ValueError: Если строка не соответствует формату 'YYYY-MM-DD'.
+    """
+    if not isinstance(date, str):
+        raise ValueError("Дата должна быть строкой!")
+
+    if not date:
         return datetime.today()
 
     try:
-        # Преобразуем строку в datetime
         parsed_date = datetime.strptime(date, "%Y-%m-%d")
-        # Не позволяем дате быть больше сегодняшней
-        date = min(parsed_date, datetime.today())
-        return date
-    except ValueError as e:
-        # Если строка не соответствует формату 'YYYY-MM-DD'
-        raise ValueError("Неправильный формат даты. Надо: YYYY-MM-DD")
+        return min(parsed_date, datetime.today())
+    except ValueError:
+        raise ValueError("Неправильный формат даты. Ожидается: YYYY-MM-DD")
 
 
-def _save_moex_list():
-    pass
+def _save_moex_list(date: str, date_from: str, tickers: list[str]) -> None:
+    """
+    Сохраняет список тикеров Московской биржи (MOEX) в файл формата Parquet.
 
+    Функция формирует DataFrame с переданными тикерами и датами,
+    объединяет его с уже существующими данными (если они есть),
+    удаляет дубликаты и сохраняет результат в файл.
 
-def _save_moex_wp_data(date, data):
-    # Превращаем словарь в DataFrame
-    df = pd.DataFrame.from_dict(data, orient="index")
-    df.reset_index(inplace=True)
-    df.rename(columns={"index": "ticker"}, inplace=True)
-    df["date"] = date  # Добавим колонку с датой
+    Args:
+        date (str): Дата выгрузки в формате 'YYYY-MM-DD'.
+        date_from (str): Дата начала периода данных.
+        tickers (list[str]): Список тикеров MOEX.
 
-    df = df[["date", "ticker", "open", "high", "low", "close", "volume"]]
+    Returns:
+        None
 
-    # Объединяем новые записи со старыми
-    if not is_moex_data_wp_file_exists:
+    Globals:
+        is_moex_data_list_file_exists (bool): Флаг, указывающий,
+            существует ли уже файл с историей данных.
+        MOEX_DATA_L (str): Путь к файлу с историей данных.
+
+    Side Effects:
+        - Создаёт или обновляет файл с историей данных MOEX.
+        - Записывает отладочную информацию в лог.
+
+    Raises:
+        OSError: При ошибках записи файла.
+        ValueError: Если входные данные некорректны.
+    """
+    global is_moex_data_list_file_exists
+
+    df = pd.DataFrame(
+        {
+            "date": [date] * len(tickers),
+            "date_from": [date_from] * len(tickers),
+            "ticker": tickers,
+        }
+    )
+
+    if not is_moex_data_list_file_exists:
         new_moex = df
+        is_moex_data_list_file_exists = True
     else:
-        old_moex = pd.read_csv(MOEX_DATA_WP)
+        old_moex = pd.read_parquet(MOEX_DATA_L)
         new_moex = pd.concat([old_moex, df], ignore_index=True)
         new_moex = new_moex.drop_duplicates(
             subset=["date", "ticker"], keep="first"
         ).dropna()
 
-    # Сохраняем новые записи в csv
-    new_moex.to_csv(MOEX_DATA_WP, index=False, encoding="utf-8")
+    new_moex.to_parquet(MOEX_DATA_L, index=False)
+    logger.debug(f"Данные сохранены в {MOEX_DATA_L}")
+
+
+def _save_moex_wp_data(date: str, data: dict) -> None:
+    """
+    Сохраняет постраничные (WP) данные о тикерах MOEX в Parquet-файл.
+
+    Функция преобразует словарь с данными по тикерам в DataFrame,
+    добавляет дату, объединяет результат с уже существующими данными
+    (если они есть), удаляет дубликаты и сохраняет итог в Parquet-файл.
+
+    Args:
+        date (str): Дата выгрузки в формате 'YYYY-MM-DD'.
+        data (dict): Словарь с ключами — тикерами, значениями —
+            словари с полями: "open", "high", "low", "close", "volume".
+
+    Returns:
+        None
+
+    Globals:
+        is_moex_data_wp_file_exists (bool): Флаг, указывающий,
+            существует ли файл с историей данных.
+        MOEX_DATA_WP (str): Путь к файлу с историей данных.
+
+    Side Effects:
+        - Создаёт или обновляет файл Parquet с историей MOEX.
+        - Пишет отладочную информацию в лог.
+
+    Raises:
+        OSError: При ошибках записи файла.
+        ValueError: Если данные не содержат обязательных полей.
+    """
+    global is_moex_data_wp_file_exists
+
+    # Преобразуем словарь в DataFrame
+    df = pd.DataFrame.from_dict(data, orient="index")
+    df.reset_index(inplace=True)
+    df.rename(columns={"index": "ticker"}, inplace=True)
+    df["date"] = date
+
+    # Сохраняем только нужные столбцы
+    df = df[["date", "ticker", "open", "high", "low", "close", "volume"]]
+
+    if not is_moex_data_wp_file_exists:
+        new_moex = df
+        is_moex_data_wp_file_exists = True
+    else:
+        old_moex = pd.read_parquet(MOEX_DATA_WP)
+        new_moex = pd.concat([old_moex, df], ignore_index=True)
+        new_moex = new_moex.drop_duplicates(
+            subset=["date", "ticker"], keep="first"
+        ).dropna()
+
+    new_moex.to_parquet(MOEX_DATA_WP, index=False)
     logger.debug(f"Данные сохранены в {MOEX_DATA_WP}")
 
 
@@ -231,10 +320,13 @@ def load_imoex_list(date="") -> dict:
     Returns:
         dict: {дата: [список тикеров]} на дату с доступными данными.
     """
+    global is_moex_data_list_file_exists
+
     set_request_id("moex_api")
 
     try:
         # Преобразуем входные параметры к datetime и проверяем корректность формата
+        start_date = date
         date = _format_date(date)
     except Exception as e:
         logger.error(f"Ошибка: {e}")
@@ -244,24 +336,36 @@ def load_imoex_list(date="") -> dict:
     if date == datetime.today():
         date = date - timedelta(days=1)
 
+    # Подгружаем локальные данные, если есть
+    if is_moex_data_list_file_exists:
+        df = pd.read_parquet(MOEX_DATA_L)
+
     # Максимальное количество попыток найти данные (до 30 дней назад)
     try_cnt = 30
     imoex_index = []
 
     # Пытаемся найти состав индекса, двигаясь назад по дням, пока не найдём данные
     while try_cnt > 0 and len(imoex_index) == 0:
-        # Загружаем данные по индексу через функцию get_index_data
-        imoex_index = get_index_data("IMOEX", date.strftime("%Y-%m-%d"))
-
-        # Извлекаем только колонку 'ticker' в виде списка
-        imoex_index = imoex_index["ticker"].to_list()
+        if (
+            is_moex_data_list_file_exists
+            and (df["date"] == date.strftime("%Y-%m-%d")).any()
+        ):
+            imoex_index = df[df["date"] == date.strftime("%Y-%m-%d")][
+                "ticker"
+            ].to_list()
+        else:
+            # Загружаем данные по индексу через функцию get_index_data
+            imoex_index = get_index_data("IMOEX", date.strftime("%Y-%m-%d"))
+            # Извлекаем только колонку 'ticker' в виде списка
+            imoex_index = imoex_index["ticker"].to_list()
 
         # Если данные отсутствуют, идем на день назад и уменьшаем счетчик попыток
         if len(imoex_index) == 0:
             date = date - timedelta(days=1)
             try_cnt -= 1
 
-    # Возвращаем словарь с датой и списком тикеров
+    _save_moex_list(start_date, date.strftime("%Y-%m-%d"), imoex_index)
+
     return {date.strftime("%Y-%m-%d"): imoex_index}
 
 
@@ -276,6 +380,8 @@ def load_imoex_list_with_prices(date="") -> dict:
     Returns:
         dict: {дата: {тикер: {'open', 'high', 'low', 'close', 'volume'}}}
     """
+    global is_moex_data_wp_file_exists
+
     set_request_id("moex_api")
     logger.info("--------------------------------------------")
 
@@ -300,11 +406,14 @@ def load_imoex_list_with_prices(date="") -> dict:
 
     # Подгружаем локальные данные, если есть
     if is_moex_data_wp_file_exists:
-        df = pd.read_csv(MOEX_DATA_WP)
+        df = pd.read_parquet(MOEX_DATA_WP)
 
     # Проходим по каждому тикеру
     for security in imoex_index:
-        if is_moex_data_wp_file_exists and ((df["date"] == date) & (df["ticker"] == security)).any():
+        if (
+            is_moex_data_wp_file_exists
+            and ((df["date"] == date) & (df["ticker"] == security)).any()
+        ):
             # Если есть сохраненные данные, то грузим оттуда
             security_data = df[(df["date"] == date) & (df["ticker"] == security)].copy()
             security_data.drop(columns=["ticker"], inplace=True)
@@ -440,9 +549,15 @@ if __name__ == "__main__":
     # Пример вызова: получить тикеры индекса на конкретную дату
     # res = load_history_imoex_list_with_prices()
     # pprint(get_kline("SBER", "2025-09-15"))
-    # res = load_imoex_list(date="2025-09-13")
+    # print(is_moex_data_list_file_exists)
+    # res = load_imoex_list(date="2020-09-12")
+    # print(pd.read_parquet(MOEX_DATA_L))
     # pprint(res)
-    res = load_available_history_imoex_list_with_prices_to(date="2025-09-16", days_back=5)
+    # res = load_available_history_imoex_list_with_prices_to(
+    #     date="2025-09-18", days_back=6
+    # )
+    # print(pd.read_parquet(MOEX_DATA_WP))
+    # print(pd.read_parquet(MOEX_DATA_L))
     # pprint(res)
     # _save_moex_data(res)
     # print()

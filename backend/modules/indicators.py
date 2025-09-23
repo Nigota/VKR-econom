@@ -37,10 +37,7 @@ def equal_weighted_index(data: dict) -> dict:
         # Индекс на этот день = среднее всех взвешенных значений
         return sum(weighted) / len(weighted)
 
-    set_request_id("indicator")
-
     res = {}  # словарь для хранения результата
-    logger.info("СЧИТАЮ ИНДИКАТОРЫ")
     # Перебираем все даты в исходных данных
     for date, tickers in data.items():
         if not tickers:
@@ -88,7 +85,7 @@ def atr(security: pd.DataFrame, period=1) -> pd.DataFrame:
 
     atr = pd.DataFrame(
         {
-            "begin": security["begin"],
+            "date": security["date"],
             "atr": atr,
             "atr_%": atr / security["close"] * 100,
             "direction": direction,
@@ -110,16 +107,28 @@ if __name__ == "__main__":
         get_kline,
     )
 
-    # проверка индекса
-    data = load_available_history_imoex_list_with_prices_to(
-        date="2025-09-16", days_back=10
-    )
+    # ПРОВЕРКА ИНДЕКСА
+    # data = load_available_history_imoex_list_with_prices_to(
+    #     date="2025-09-18", days_back=10
+    # )
+    # result = equal_weighted_index(data)
+    # pprint(result)
 
-    result = equal_weighted_index(data)
-    pprint(result)
-
-    # # проверка корреляции
+    # ПРОВЕРКА КОРРЕЛЯЦИИ
+    # проверка работы с акциями
     # data = get_kline("SBER", "2025-09-10", "2025-09-16")
-    # pprint(data)
+    # data.rename(columns={"begin": "date"}, inplace=True)
+    # проверка работы с индексом
+    data = load_available_history_imoex_list_with_prices_to(
+        date="2025-09-18", days_back=10
+    )
+    data = equal_weighted_index(data)
+    data = pd.DataFrame.from_dict(data, orient="index").reset_index()
+    data.rename(columns={"index": "date"}, inplace=True)
+    # data["date"] = pd.to_datetime(data["date"])
+    # data = data.sort_values(by='date').reset_index(drop=True)
+    # data["date"] = data["date"].dt.strftime("%Y-%m-%d")
+    pprint(data)
 
-    # print(atr(data))
+    print(atr(data))
+

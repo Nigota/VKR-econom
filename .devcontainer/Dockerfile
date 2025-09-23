@@ -30,6 +30,11 @@ RUN useradd -m -s /bin/bash vscode && \
     echo 'vscode ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/vscode && \
     chmod 0440 /etc/sudoers.d/vscode
 
+    
+# Установка Python-зависимостей
+COPY --chown=vscode:vscode requirements-dev.txt ./
+RUN pip install --no-cache-dir -r requirements-dev.txt
+
 # Переключение на обычного пользователя
 USER vscode
 
