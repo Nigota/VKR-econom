@@ -1,5 +1,6 @@
 import requests
 import pandas as pd
+import numpy as np
 import os
 from time import sleep
 from datetime import datetime, timedelta
@@ -222,6 +223,7 @@ def get_index_data(index="IMOEX", date="") -> pd.DataFrame:
             # Добавляем новые строки к общему списку
             all_rows.extend(rows)
             start += len(rows)  # увеличиваем смещение для следующей "страницы" данных
+            sleep(2)
         except Exception as e:
             # Логируем ошибку и возвращаем пустой DataFrame с нужными колонками
             full_url = f"{url}?{requests.compat.urlencode(params)}"
@@ -330,6 +332,7 @@ def load_imoex_list(date="") -> dict:
         date = _format_date(date)
     except Exception as e:
         logger.error(f"Ошибка: {e}")
+        {date.strftime("%Y-%m-%d"): []}
 
     # Если дата = сегодня, берём предыдущий день,
     # т.к. состав индекса доступен только за закрытые сессии
@@ -363,6 +366,7 @@ def load_imoex_list(date="") -> dict:
         if len(imoex_index) == 0:
             date = date - timedelta(days=1)
             try_cnt -= 1
+            sleep(2)
 
     _save_moex_list(start_date, date.strftime("%Y-%m-%d"), imoex_index)
 
@@ -538,9 +542,32 @@ def load_available_history_imoex_list_with_prices_to(date="", days_back=0) -> di
         # Переходим на 1 календарный день назад
         date = date - timedelta(days=1)
         try_cnt -= 1
+        sleep(2)
 
     logger.info("Сбор истории индекса завершен!")
     return res
+
+
+def top_by_volume(date, top_cnt=None):
+    try:
+        # Преобразуем входной параметр в datetime и проверяем его корректность
+        date = _format_date(date)
+        date = date.strftime("%Y-%m-%d")
+    except Exception as e:
+        # Если формат некорректный — логируем ошибку и возвращаем пустой результат
+        logger.error(f"Ошибка: {e}")
+        return {datetime.today().strftime("%Y-%m-%d"): {}}
+
+    data_index = load_available_history_imoex_list_with_prices_to(date=date)
+    date = next(iter(data_index))
+    securities = [[k, v["volume"]] for k, v in data_index[date].items()]
+    securities.sort(key=lambda x: x[1], reverse=True)
+
+    if top_cnt is None:
+        top_cnt = len(securities)
+    top_cnt = min(top_cnt, len(securities))
+
+    return [sec[0] for sec in securities[:top_cnt]]
 
 
 if __name__ == "__main__":
@@ -563,3 +590,11 @@ if __name__ == "__main__":
     # print()
     # pprint(get_index_data(date="2025-09-11"))
     # print()
+
+    # -------------- ПРОВЕРКА ПОЛУЧЕНИЯ ТОПА -------------
+    # date = "2025-09-17"
+    # data_index = load_available_history_imoex_list_with_prices_to(date=date)
+    # pprint(data_index)
+
+    # res = top_by_volume(date, 4)
+    # pprint(res)
