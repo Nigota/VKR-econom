@@ -3,3 +3,5 @@ pandas
 pyarrow
 fastparquet
 requests
+fastapi
+uvicorn

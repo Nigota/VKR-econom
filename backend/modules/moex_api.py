@@ -228,6 +228,7 @@ def get_index_data(index="IMOEX", date="") -> pd.DataFrame:
             # Логируем ошибку и возвращаем пустой DataFrame с нужными колонками
             full_url = f"{url}?{requests.compat.urlencode(params)}"
             logger.error(f"Ошибка запроса: {e}. URL: {full_url}")
+            sleep(2)
             return pd.DataFrame(
                 {
                     "indexid": [],
@@ -366,7 +367,6 @@ def load_imoex_list(date="") -> dict:
         if len(imoex_index) == 0:
             date = date - timedelta(days=1)
             try_cnt -= 1
-            sleep(2)
 
     _save_moex_list(start_date, date.strftime("%Y-%m-%d"), imoex_index)
 
@@ -542,25 +542,32 @@ def load_available_history_imoex_list_with_prices_to(date="", days_back=0) -> di
         # Переходим на 1 календарный день назад
         date = date - timedelta(days=1)
         try_cnt -= 1
-        sleep(2)
 
     logger.info("Сбор истории индекса завершен!")
     return res
 
 
-def top_by_volume(date, top_cnt=None):
+def top_by_volume(date, days_back=0, top_cnt=None):
     try:
         # Преобразуем входной параметр в datetime и проверяем его корректность
         date = _format_date(date)
         date = date.strftime("%Y-%m-%d")
+
+        if days_back < 0:
+            raise Exception("Некорректное число дней назад")
     except Exception as e:
         # Если формат некорректный — логируем ошибку и возвращаем пустой результат
         logger.error(f"Ошибка: {e}")
         return {datetime.today().strftime("%Y-%m-%d"): {}}
 
-    data_index = load_available_history_imoex_list_with_prices_to(date=date)
-    date = next(iter(data_index))
-    securities = [[k, v["volume"]] for k, v in data_index[date].items()]
+    data_index = load_available_history_imoex_list_with_prices_to(
+        date=date, days_back=3
+    )
+    securities = {}
+    for cur_date in data_index:
+        for k, v in data_index[cur_date].items():
+            securities[k] = securities.get(k, 0) + v["volume"]
+    securities = [[k, v] for k, v in securities.items()]
     securities.sort(key=lambda x: x[1], reverse=True)
 
     if top_cnt is None:
@@ -593,8 +600,11 @@ if __name__ == "__main__":
 
     # -------------- ПРОВЕРКА ПОЛУЧЕНИЯ ТОПА -------------
     # date = "2025-09-17"
-    # data_index = load_available_history_imoex_list_with_prices_to(date=date)
+    # days_back = 4
+    # data_index = load_available_history_imoex_list_with_prices_to(
+    #     date=date, days_back=days_back
+    # )
     # pprint(data_index)
 
-    # res = top_by_volume(date, 4)
+    # res = top_by_volume(date, 4, 10)
     # pprint(res)

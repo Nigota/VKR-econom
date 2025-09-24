@@ -57,7 +57,7 @@ def get_tradable_securities(date="", sec_cnt=20, look_back=5, min_act=1, min_cor
     # ЭТАП 1: получаем все тикеры и свечи за 10 дней + look_back
     set_request_id("indicator")
     logger.info("ЭТАП 1: получаем все тикеры и свечи за 10 дней + look_back")
-    days_back = 10 + look_back
+    days_back = look_back + 3
     data_index = load_available_history_imoex_list_with_prices_to(
         date=date, days_back=days_back
     )
@@ -71,17 +71,25 @@ def get_tradable_securities(date="", sec_cnt=20, look_back=5, min_act=1, min_cor
 
     ewi = equal_weighted_index(data_index)
 
+    # Преобразовываем ewi для дальнейшей работы
+    ewi_df = pd.DataFrame.from_dict(ewi, orient="index").reset_index()
+    ewi_df.rename(columns={"index": "date"}, inplace=True)
+    ewi_df.date = pd.to_datetime(ewi_df.date)
+    ewi_df = ewi_df.sort_values(by="date").reset_index(drop=True)
+
     # ЭТАП 3: отбираем топ бумаг по объему и загружаем их
     set_request_id("indicator")
     logger.info("ЭТАП 3: отбираем топ бумаг по объему")
 
-    top_sec = top_by_volume(date, sec_cnt)
+    # получаем топ бумаг
+    top_sec = top_by_volume(date, days_back, sec_cnt)
 
+    # грузим этот топ из  локальной истории, чтобы повторно не делать запросы к бирже
     moex_hist = pd.read_parquet(MOEX_DATA_WP)
     moex_hist.date = pd.to_datetime(moex_hist.date)
 
-    start_dt = pd.to_datetime(date) - timedelta(days=days_back)
-    end_dt = pd.to_datetime(date)
+    start_dt = ewi_df.head(1).iloc[0, 0]
+    end_dt = ewi_df.tail(1).iloc[0, 0]
     securities = moex_hist[
         (moex_hist.date >= start_dt)
         & (moex_hist.date <= end_dt)
@@ -96,26 +104,29 @@ def get_tradable_securities(date="", sec_cnt=20, look_back=5, min_act=1, min_cor
         "ЭТАП 4: отбираем из топа только бумаги с хорошей корреляцией и волатильностью"
     )
 
-    # Преобразовываем ewi для дальнейшей работы
-    ewi_df = pd.DataFrame.from_dict(ewi, orient="index").reset_index()
-    ewi_df.rename(columns={"index": "date"}, inplace=True)
-    ewi_df.date = pd.to_datetime(ewi_df.date)
-    ewi_df = ewi_df.sort_values(by="date").reset_index(drop=True)
-
     # Расчитываем atr индекса
-    index_atr = atr(ewi_df)
+    index_atr = atr(ewi_df, period=1)
 
     # Отбираем бумаги
     super_top = []
     for sec in top_sec:
         sec_df = securities[securities.ticker == sec].reset_index(drop=True)
-        sec_atr = atr(sec_df)
-        sec_corr_with_index = correlation(sec_atr, index_atr)
+        sec_atr = atr(sec_df, period=1)
+        sec_corr_with_index = correlation(sec_atr, index_atr, window=look_back)
         sec_activity = activity(sec_atr, index_atr)
 
-        cur_corr = sec_corr_with_index[sec_corr_with_index.date == end_dt].iloc[0, 1]
-        cur_act = sec_activity[sec_activity.date == end_dt].iloc[0, 1]
-        if cur_corr >= min_corr and cur_act >= min_act:
+        if (
+            not sec_corr_with_index[sec_corr_with_index.date == end_dt].empty
+            and not sec_activity[sec_activity.date == end_dt].empty
+            and sec_corr_with_index[sec_corr_with_index.date == end_dt].iloc[0, 1]
+            >= min_corr
+            and sec_activity[sec_activity.date == end_dt].iloc[0, 1] >= min_act
+        ):
+            # cur_corr = sec_corr_with_index[sec_corr_with_index.date == end_dt].iloc[
+            #     0, 1
+            # ]
+            # cur_act = sec_activity[sec_activity.date == end_dt].iloc[0, 1]
+            # if cur_corr >= min_corr and cur_act >= min_act:
             super_top.append(sec)
 
     return super_top
@@ -124,5 +135,5 @@ def get_tradable_securities(date="", sec_cnt=20, look_back=5, min_act=1, min_cor
 if __name__ == "__main__":
     from pprint import pprint
 
-    res = get_tradable_securities(date="2025-09-18")
+    res = get_tradable_securities(date="2025-09-23", look_back=7)
     pprint(res)
